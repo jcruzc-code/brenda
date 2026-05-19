@@ -64,6 +64,7 @@ ANIO_MAX = 2027
 # Asumo que unidad = sede.
 # Si tu archivo tiene otra columna de unidad, cambia esta variable.
 UNIDAD_COL = "sede"
+FECHA_BASE_COL = "fecha_base"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -88,6 +89,17 @@ def normalizar_upper(x):
 
 def parse_fecha(s):
     return pd.to_datetime(s, errors="coerce", dayfirst=True)
+
+
+def parse_marca_temporal(s):
+    # Primero intenta formato tipo Excel/Forms m/d/Y H:M:S.
+    dt = pd.to_datetime(s, errors="coerce", dayfirst=False)
+    if isinstance(dt, pd.Series):
+        faltantes = dt.isna()
+        if faltantes.any():
+            dt_alt = pd.to_datetime(s, errors="coerce", dayfirst=True)
+            dt.loc[faltantes] = dt_alt.loc[faltantes]
+    return dt
 
 
 def limpiar_cliente(x):
@@ -354,13 +366,17 @@ def preparar_datos(df_raw):
             df[col] = df[col].apply(normalizar_texto)
 
     # Fechas
-    for col in ["fecha_visita", "marca_temporal", "fecha_siguiente_visita"]:
-        df[col] = parse_fecha(df[col])
+    df["fecha_visita"] = parse_fecha(df["fecha_visita"])
+    df["marca_temporal"] = parse_marca_temporal(df["marca_temporal"])
+    df["fecha_siguiente_visita"] = parse_fecha(df["fecha_siguiente_visita"])
 
-    # Filtro de fechas extremas
+    # Fecha base confiable para filtro: marca_temporal sin hora.
+    df[FECHA_BASE_COL] = df["marca_temporal"].dt.normalize()
+
+    # Filtro de fechas extremas usando fecha base.
     df = df[
-        df["fecha_visita"].dt.year.between(ANIO_MIN, ANIO_MAX, inclusive="both")
-        | df["fecha_visita"].isna()
+        df[FECHA_BASE_COL].dt.year.between(ANIO_MIN, ANIO_MAX, inclusive="both")
+        | df[FECHA_BASE_COL].isna()
     ].copy()
 
     # Campos limpios
@@ -381,12 +397,12 @@ def preparar_datos(df_raw):
     df["puntuacion_cliente"] = pd.to_numeric(df["puntuacion_cliente"], errors="coerce")
 
     # Tiempo
-    df["anio"] = df["fecha_visita"].dt.year
-    df["mes"] = df["fecha_visita"].dt.month
-    df["mes_nombre"] = df["fecha_visita"].dt.strftime("%Y-%m")
-    df["fecha_dia"] = df["fecha_visita"].dt.strftime("%Y-%m-%d")
-    df["semana_iso"] = df["fecha_visita"].dt.strftime("%G-S%V")
-    df["dia_semana"] = df["fecha_visita"].dt.day_name()
+    df["anio"] = df[FECHA_BASE_COL].dt.year
+    df["mes"] = df[FECHA_BASE_COL].dt.month
+    df["mes_nombre"] = df[FECHA_BASE_COL].dt.strftime("%Y-%m")
+    df["fecha_dia"] = df[FECHA_BASE_COL].dt.strftime("%Y-%m-%d")
+    df["semana_iso"] = df[FECHA_BASE_COL].dt.strftime("%G-S%V")
+    df["dia_semana"] = df[FECHA_BASE_COL].dt.day_name()
 
     # Problemas
     df["flag_problema_materiales"] = df["problema_materiales"].apply(tiene_problema)
@@ -426,12 +442,12 @@ def preparar_datos(df_raw):
 
     # Días
     df["dias_hasta_siguiente"] = (
-        df["fecha_siguiente_visita"] - df["fecha_visita"]
+        df["fecha_siguiente_visita"] - df[FECHA_BASE_COL]
     ).dt.days
 
-    if df["fecha_visita"].notna().any():
-        fecha_ref = df["fecha_visita"].max()
-        df["dias_desde_visita"] = (fecha_ref - df["fecha_visita"]).dt.days
+    if df[FECHA_BASE_COL].notna().any():
+        fecha_ref = df[FECHA_BASE_COL].max()
+        df["dias_desde_visita"] = (fecha_ref - df[FECHA_BASE_COL]).dt.days
     else:
         df["dias_desde_visita"] = np.nan
 
@@ -446,15 +462,15 @@ def construir_periodo(data, granularidad):
     data = data.copy()
 
     if granularidad == "Día":
-        data["periodo"] = data["fecha_visita"].dt.strftime("%Y-%m-%d")
+        data["periodo"] = data[FECHA_BASE_COL].dt.strftime("%Y-%m-%d")
     elif granularidad == "Semana":
-        data["periodo"] = data["fecha_visita"].dt.strftime("%G-S%V")
+        data["periodo"] = data[FECHA_BASE_COL].dt.strftime("%G-S%V")
     elif granularidad == "Mes":
-        data["periodo"] = data["fecha_visita"].dt.strftime("%Y-%m")
+        data["periodo"] = data[FECHA_BASE_COL].dt.strftime("%Y-%m")
     elif granularidad == "Año":
-        data["periodo"] = data["fecha_visita"].dt.strftime("%Y")
+        data["periodo"] = data[FECHA_BASE_COL].dt.strftime("%Y")
     else:
-        data["periodo"] = data["fecha_visita"].dt.strftime("%Y-%m-%d")
+        data["periodo"] = data[FECHA_BASE_COL].dt.strftime("%Y-%m-%d")
 
     return data
 
@@ -473,7 +489,7 @@ def tabla_b_top_clientes(data):
     resumen = (
         data.groupby("cliente", dropna=False)
         .agg(
-            visitas=("fecha_visita", "count"),
+            visitas=(FECHA_BASE_COL, "count"),
             unidades=("unidad", "nunique"),
             responsables=("responsable_norm", "nunique"),
             puntuacion_prom=("puntuacion_cliente", "mean"),
@@ -502,7 +518,7 @@ def tabla_c_responsables(data):
     resumen = (
         data.groupby("responsable_norm", dropna=False)
         .agg(
-            visitas=("fecha_visita", "count"),
+            visitas=(FECHA_BASE_COL, "count"),
             clientes_atendidos=("cliente", "nunique"),
             unidades_visitadas=("unidad", "nunique"),
             puntuacion_prom=("puntuacion_cliente", "mean"),
@@ -528,7 +544,7 @@ def tabla_d_evolucion(data, granularidad="Mes"):
     evolucion = (
         data.groupby("periodo", dropna=False)
         .agg(
-            visitas=("fecha_visita", "count"),
+            visitas=(FECHA_BASE_COL, "count"),
             clientes=("cliente", "nunique"),
             unidades=("unidad", "nunique"),
             responsables=("responsable_norm", "nunique"),
@@ -611,7 +627,7 @@ def tabla_h_sedes_problemas(data):
     resumen = (
         data.groupby("unidad", dropna=False)
         .agg(
-            visitas=("fecha_visita", "count"),
+            visitas=(FECHA_BASE_COL, "count"),
             clientes=("cliente", "nunique"),
             total_problemas=("total_problemas", "sum"),
             visitas_con_problemas=("tiene_algun_problema", "sum"),
@@ -635,7 +651,7 @@ def tabla_i_clientes_peor_puntuacion(data, min_visitas=5):
     clientes_punt = (
         data.groupby("cliente", dropna=False)
         .agg(
-            visitas=("fecha_visita", "count"),
+            visitas=(FECHA_BASE_COL, "count"),
             unidades=("unidad", "nunique"),
             puntuacion_prom=("puntuacion_cliente", "mean"),
             total_problemas=("total_problemas", "sum"),
@@ -712,9 +728,9 @@ def resumen_cliente_unidad(data):
     resumen = (
         data.groupby(["cliente", "unidad"], dropna=False)
         .agg(
-            visitas=("fecha_visita", "count"),
-            primera_visita=("fecha_visita", "min"),
-            ultima_visita=("fecha_visita", "max"),
+            visitas=(FECHA_BASE_COL, "count"),
+            primera_visita=(FECHA_BASE_COL, "min"),
+            ultima_visita=(FECHA_BASE_COL, "max"),
             responsables=("responsable_norm", "nunique"),
             responsables_lista=("responsable_norm", lambda x: ", ".join(sorted(set([i for i in x.dropna()])))),
             puntuacion_prom=("puntuacion_cliente", "mean"),
@@ -802,15 +818,15 @@ if df.empty:
 
 st.sidebar.header("2) Filtros globales")
 
-fecha_min = df["fecha_visita"].min()
-fecha_max = df["fecha_visita"].max()
+fecha_min = df[FECHA_BASE_COL].min()
+fecha_max = df[FECHA_BASE_COL].max()
 
 if pd.isna(fecha_min) or pd.isna(fecha_max):
-    st.error("No se encontraron fechas válidas en la columna de fecha de visita.")
+    st.error("No se encontraron fechas validas en la columna marca temporal.")
     st.stop()
 
 rango_fecha = st.sidebar.date_input(
-    "Rango de fecha de visita",
+    "Rango de fecha (marca temporal)",
     value=(fecha_min.date(), fecha_max.date()),
     min_value=fecha_min.date(),
     max_value=fecha_max.date()
@@ -933,8 +949,8 @@ fecha_inicio_dt = pd.to_datetime(fecha_inicio)
 fecha_fin_dt = pd.to_datetime(fecha_fin) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
 
 data = data_base[
-    (data_base["fecha_visita"] >= fecha_inicio_dt)
-    & (data_base["fecha_visita"] <= fecha_fin_dt)
+    (data_base[FECHA_BASE_COL] >= fecha_inicio_dt)
+    & (data_base[FECHA_BASE_COL] <= fecha_fin_dt)
 ].copy()
 
 if data.empty:
@@ -1234,6 +1250,6 @@ with tab_detalle:
     ]
 
     detalle_cols = [c for c in detalle_cols if c in data.columns]
-    detalle = data[detalle_cols].sort_values("fecha_visita", ascending=False)
+    detalle = data[detalle_cols].sort_values("marca_temporal", ascending=False)
 
     st.dataframe(detalle, use_container_width=True, height=650)
