@@ -28,6 +28,36 @@ st.set_page_config(
 st.title("📋 Dashboard Check List Supervisión")
 st.caption("Análisis operativo con filtros globales, tablas A-J y matriz Cliente-Unidad por Fecha.")
 
+st.markdown(
+    """
+    <style>
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h2 {
+        border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+        padding-bottom: 0.35rem;
+        margin-bottom: 0.75rem;
+    }
+    [data-testid="stSidebar"] label {
+        font-weight: 600;
+    }
+    [data-testid="stSidebar"] [data-baseweb="input"],
+    [data-testid="stSidebar"] [data-baseweb="select"],
+    [data-testid="stSidebar"] [data-baseweb="tag"] {
+        border-radius: 10px;
+    }
+    [data-testid="stSidebar"] [data-baseweb="input"] {
+        background: rgba(255, 255, 255, 0.02);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+    }
+    [data-testid="stSidebar"] .stDateInput {
+        padding: 0.25rem;
+        border-radius: 10px;
+        background: rgba(0, 0, 0, 0.22);
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 ANIO_MIN = 2020
 ANIO_MAX = 2027
 
@@ -45,7 +75,7 @@ def normalizar_texto(x):
         return np.nan
     x = str(x).strip()
     x = re.sub(r"\s+", " ", x)
-    return x
+    return x if x else np.nan
 
 
 def normalizar_upper(x):
@@ -53,7 +83,7 @@ def normalizar_upper(x):
         return np.nan
     x = str(x).strip().upper()
     x = re.sub(r"\s+", " ", x)
-    return x
+    return x if x else np.nan
 
 
 def parse_fecha(s):
@@ -66,7 +96,8 @@ def limpiar_cliente(x):
     x = str(x).strip()
     x = x.split("/")[0].strip()
     x = re.sub(r"\s+", " ", x)
-    return x.upper()
+    x = x.upper()
+    return x if x else np.nan
 
 
 def parse_operarios(val):
@@ -787,6 +818,11 @@ rango_fecha = st.sidebar.date_input(
 
 if isinstance(rango_fecha, tuple) and len(rango_fecha) == 2:
     fecha_inicio, fecha_fin = rango_fecha
+elif isinstance(rango_fecha, date):
+    # Permite filtrar un único día cuando el control devuelve una sola fecha.
+    fecha_inicio, fecha_fin = rango_fecha, rango_fecha
+elif isinstance(rango_fecha, (list, tuple)) and len(rango_fecha) == 1:
+    fecha_inicio, fecha_fin = rango_fecha[0], rango_fecha[0]
 else:
     fecha_inicio, fecha_fin = fecha_min.date(), fecha_max.date()
 
@@ -858,42 +894,44 @@ top_n = st.sidebar.slider(
     step=5
 )
 
+modo_compacto = st.sidebar.toggle("Vista rápida compacta", value=True)
+
 
 # Aplicar filtros
-data = df.copy()
-
-data = data[
-    (data["fecha_visita"] >= pd.to_datetime(fecha_inicio))
-    & (data["fecha_visita"] <= pd.to_datetime(fecha_fin))
-].copy()
+data_base = df.copy()
 
 if responsables_sel:
-    data = data[data["responsable_norm"].isin(responsables_sel)]
+    data_base = data_base[data_base["responsable_norm"].isin(responsables_sel)]
 
 if clientes_sel:
-    data = data[data["cliente"].isin(clientes_sel)]
+    data_base = data_base[data_base["cliente"].isin(clientes_sel)]
 
 if unidades_sel:
-    data = data[data["unidad"].isin(unidades_sel)]
+    data_base = data_base[data_base["unidad"].isin(unidades_sel)]
 
 if motivos_sel:
-    data = data[data["motivo_visita_norm"].isin(motivos_sel)]
+    data_base = data_base[data_base["motivo_visita_norm"].isin(motivos_sel)]
 
 if seguimiento_sel:
-    data = data[data["seguimiento_por_norm"].isin(seguimiento_sel)]
+    data_base = data_base[data_base["seguimiento_por_norm"].isin(seguimiento_sel)]
 
 if tipo_problema == "Solo visitas con problemas":
-    data = data[data["tiene_algun_problema"] == 1]
+    data_base = data_base[data_base["tiene_algun_problema"] == 1]
 elif tipo_problema == "Solo visitas sin problemas":
-    data = data[data["tiene_algun_problema"] == 0]
+    data_base = data_base[data_base["tiene_algun_problema"] == 0]
 elif tipo_problema == "Problemas de materiales / uniformes":
-    data = data[data["flag_problema_materiales"] == 1]
+    data_base = data_base[data_base["flag_problema_materiales"] == 1]
 elif tipo_problema == "Problemas de pagos":
-    data = data[data["flag_problema_pagos"] == 1]
+    data_base = data_base[data_base["flag_problema_pagos"] == 1]
 elif tipo_problema == "Problemas de destaque":
-    data = data[data["flag_problema_destaque"] == 1]
+    data_base = data_base[data_base["flag_problema_destaque"] == 1]
 elif tipo_problema == "Problemas SSOMA / SIG":
-    data = data[data["flag_problema_ssoma"] == 1]
+    data_base = data_base[data_base["flag_problema_ssoma"] == 1]
+
+data = data_base[
+    (data_base["fecha_visita"] >= pd.to_datetime(fecha_inicio))
+    & (data_base["fecha_visita"] <= pd.to_datetime(fecha_fin))
+].copy()
 
 if data.empty:
     st.warning("No hay datos con los filtros seleccionados.")
@@ -920,6 +958,36 @@ tabla_k = tabla_k_matriz_cliente_unidad_fecha(
     min_visitas=min_visitas_matriz
 )
 tabla_cu = resumen_cliente_unidad(data)
+
+# Resumen ejecutivo compacto
+tabla_supervisor_visitas = tabla_c[[
+    "responsable_norm",
+    "visitas",
+    "unidades_visitadas",
+    "clientes_atendidos",
+    "% visitas con problemas",
+]].copy()
+
+ratio_sede_cliente = (
+    data.groupby(["responsable_norm", "unidad", "cliente"], dropna=False)
+    .size()
+    .reset_index(name="visitas")
+)
+if not ratio_sede_cliente.empty:
+    total_por_supervisor = ratio_sede_cliente.groupby("responsable_norm")["visitas"].transform("sum")
+    ratio_sede_cliente["ratio_visitas_%"] = (ratio_sede_cliente["visitas"] / total_por_supervisor * 100).round(1)
+    ratio_sede_cliente = ratio_sede_cliente.sort_values(
+        ["responsable_norm", "visitas", "ratio_visitas_%"],
+        ascending=[True, False, False]
+    )
+
+promedio_sedes_por_supervisor = tabla_c["unidades_visitadas"].mean() if not tabla_c.empty else 0
+
+unidades_periodo = set(data["unidad"].dropna().unique())
+unidades_universo = set(data_base["unidad"].dropna().unique())
+sedes_no_visitadas = pd.DataFrame({
+    "unidad_no_visitada": sorted(unidades_universo - unidades_periodo)
+})
 
 
 # ─────────────────────────────────────────────────────────────
@@ -948,6 +1016,10 @@ c6.metric("Visitas con problemas", f"{visitas_con_problemas:,.0f}", f"{pct_probl
 c7.metric("Problemas detectados", f"{total_problemas:,.0f}")
 c8.metric("Emergencias", f"{emergencias:,.0f}")
 
+c9, c10 = st.columns(2)
+c9.metric("Promedio de sedes por supervisor", f"{promedio_sedes_por_supervisor:.1f}")
+c10.metric("Sedes no visitadas (periodo)", f"{len(sedes_no_visitadas):,.0f}")
+
 
 # ─────────────────────────────────────────────────────────────
 # 8. DESCARGA GENERAL
@@ -955,6 +1027,9 @@ c8.metric("Emergencias", f"{emergencias:,.0f}")
 
 tabs_export = {
     "Datos_Filtrados": data,
+    "Resumen_Supervisores": tabla_supervisor_visitas,
+    "Ratio_Sede_Cliente": ratio_sede_cliente,
+    "Sedes_No_Visitadas": sedes_no_visitadas,
     "K_Matriz_Cliente_Unidad": tabla_k,
     "Resumen_Cliente_Unidad": tabla_cu,
     "A_Visitas_por_Motivo": tabla_a,
@@ -985,267 +1060,135 @@ st.divider()
 # 9. TABS DE VISUALIZACIÓN
 # ─────────────────────────────────────────────────────────────
 
-tab_dashboard, tab_k, tab_a, tab_b, tab_c, tab_d, tab_e, tab_f, tab_g, tab_h, tab_i, tab_j, tab_detalle = st.tabs([
-    "📊 Dashboard",
-    "K) Cliente-Unidad x Fecha",
-    "A) Motivo",
-    "B) Clientes",
-    "C) Responsables",
-    "D) Evolución",
-    "E) Problemas",
-    "F) Puntuación",
-    "G) Documentación",
-    "H) Sedes/Unidades",
-    "I) Peor puntuación",
-    "J) Siguiente visita",
-    "Detalle",
-])
+if modo_compacto:
+    tab_resumen, tab_detalle = st.tabs(["📌 Resumen rápido", "Detalle"])
+else:
+    tab_resumen, tab_detalle, tab_k, tab_a, tab_b, tab_c, tab_d, tab_e, tab_f, tab_g, tab_h, tab_i, tab_j = st.tabs([
+        "📌 Resumen rápido",
+        "Detalle",
+        "K) Cliente-Unidad x Fecha",
+        "A) Motivo",
+        "B) Clientes",
+        "C) Responsables",
+        "D) Evolución",
+        "E) Problemas",
+        "F) Puntuación",
+        "G) Documentación",
+        "H) Sedes/Unidades",
+        "I) Peor puntuación",
+        "J) Siguiente visita",
+    ])
 
+with tab_resumen:
+    st.subheader("Vista ejecutiva rápida")
 
-with tab_dashboard:
-    st.subheader("Vista general")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
+    r1c1, r1c2 = st.columns(2)
+    with r1c1:
         st.plotly_chart(
             px.bar(
-                tabla_d,
-                x="periodo",
-                y="visitas",
-                text="visitas",
-                title=f"Evolución de visitas por {granularidad.lower()}",
-            ),
-            use_container_width=True
-        )
-
-    with col2:
-        st.plotly_chart(
-            px.bar(
-                tabla_e,
-                x="tipo_problema",
-                y="problemas",
-                text="problemas",
-                title="Problemas por tipo",
-            ),
-            use_container_width=True
-        )
-
-    col3, col4 = st.columns(2)
-
-    with col3:
-        top_clientes_chart = tabla_b.head(top_n).sort_values("visitas")
-        st.plotly_chart(
-            px.bar(
-                top_clientes_chart,
-                x="visitas",
-                y="cliente",
-                orientation="h",
-                text="visitas",
-                title=f"Top {top_n} clientes por visitas",
-            ),
-            use_container_width=True
-        )
-
-    with col4:
-        top_resp_chart = tabla_c.head(top_n).sort_values("visitas")
-        st.plotly_chart(
-            px.bar(
-                top_resp_chart,
+                tabla_supervisor_visitas.head(top_n).sort_values("visitas"),
                 x="visitas",
                 y="responsable_norm",
                 orientation="h",
                 text="visitas",
-                title=f"Top {top_n} responsables por visitas",
+                title=f"Visitas por supervisor (Top {top_n})",
+                hover_data=["unidades_visitadas", "clientes_atendidos", "% visitas con problemas"],
             ),
-            use_container_width=True
+            use_container_width=True,
         )
-
-
-with tab_k:
-    st.subheader("K) Cliente + Unidad por columnas de Fecha")
-    st.write(
-        "Filas: cliente y unidad/sede. Columnas: periodo seleccionado. "
-        "Celda: cantidad de visitas realizadas."
-    )
-
-    st.dataframe(tabla_k, use_container_width=True, height=560)
-
-    st.subheader("Resumen Cliente + Unidad")
-    st.dataframe(tabla_cu, use_container_width=True, height=520)
-
-
-with tab_a:
-    st.subheader("A) Visitas por motivo")
-    st.plotly_chart(
-        px.bar(tabla_a, x="motivo_visita", y="visitas", text="visitas"),
-        use_container_width=True
-    )
-    st.dataframe(tabla_a, use_container_width=True, height=520)
-
-
-with tab_b:
-    st.subheader("B) Top clientes por visitas + puntuación + problemas")
-    st.dataframe(tabla_b.head(top_n), use_container_width=True, height=520)
-
-    st.plotly_chart(
-        px.bar(
-            tabla_b.head(top_n).sort_values("visitas"),
-            x="visitas",
-            y="cliente",
-            orientation="h",
-            text="visitas",
-            hover_data=["puntuacion_prom", "total_problemas", "% visitas con problemas"],
-        ),
-        use_container_width=True
-    )
-
-
-with tab_c:
-    st.subheader("C) Responsables por visitas, cobertura y problemas")
-    st.dataframe(tabla_c.head(top_n), use_container_width=True, height=520)
-
-    st.plotly_chart(
-        px.bar(
-            tabla_c.head(top_n).sort_values("visitas"),
-            x="visitas",
-            y="responsable_norm",
-            orientation="h",
-            text="visitas",
-            hover_data=["clientes_atendidos", "unidades_visitadas", "puntuacion_prom", "total_problemas_detectados"],
-        ),
-        use_container_width=True
-    )
-
-
-with tab_d:
-    st.subheader(f"D) Evolución de visitas por {granularidad.lower()}")
-    st.dataframe(tabla_d, use_container_width=True, height=520)
-
-    st.plotly_chart(
-        px.line(
-            tabla_d,
-            x="periodo",
-            y=["visitas", "visitas_con_problemas"],
-            markers=True,
-            title="Visitas vs visitas con problemas",
-        ),
-        use_container_width=True
-    )
-
-    st.plotly_chart(
-        px.line(
-            tabla_d,
-            x="periodo",
-            y="puntuacion_prom",
-            markers=True,
-            title="Evolución de puntuación promedio",
-        ),
-        use_container_width=True
-    )
-
-
-with tab_e:
-    st.subheader("E) Detección de problemas")
-    st.dataframe(tabla_e, use_container_width=True, height=420)
-
-    st.plotly_chart(
-        px.bar(
-            tabla_e,
-            x="tipo_problema",
-            y="problemas",
-            text="problemas",
-            hover_data=["% sobre registros con respuesta", "% sobre total visitas"],
-        ),
-        use_container_width=True
-    )
-
-
-with tab_f:
-    st.subheader("F) Distribución de puntuación del cliente")
-    st.dataframe(tabla_f, use_container_width=True, height=420)
-
-    if not tabla_f.empty:
+    with r1c2:
         st.plotly_chart(
             px.bar(
-                tabla_f,
-                x="puntuacion",
-                y="cantidad",
-                text="cantidad",
-                title="Distribución de puntuación",
+                tabla_a.head(top_n),
+                x="motivo_visita",
+                y="visitas",
+                text="visitas",
+                title="Motivos de visita",
             ),
-            use_container_width=True
+            use_container_width=True,
         )
 
-
-with tab_g:
-    st.subheader("G) Documentación verificada")
-    st.dataframe(tabla_g, use_container_width=True, height=420)
-
-    st.plotly_chart(
-        px.bar(
-            tabla_g,
-            x="documento",
-            y="frecuencia",
-            text="frecuencia",
-            hover_data=["% sobre visitas"],
-        ),
-        use_container_width=True
-    )
-
-
-with tab_h:
-    st.subheader("H) Sedes / unidades con más problemas combinados")
-    st.dataframe(tabla_h.head(top_n), use_container_width=True, height=520)
-
-    st.plotly_chart(
-        px.bar(
-            tabla_h.head(top_n).sort_values("total_problemas"),
-            x="total_problemas",
-            y="unidad",
-            orientation="h",
-            text="total_problemas",
-            hover_data=["visitas", "clientes", "promedio_problemas", "puntuacion_prom"],
-        ),
-        use_container_width=True
-    )
-
-
-with tab_i:
-    st.subheader(f"I) Clientes con peor puntuación promedio, mínimo {min_visitas_peor_punt} visitas")
-    st.dataframe(tabla_i.head(top_n), use_container_width=True, height=520)
-
-    if not tabla_i.empty:
+    r2c1, r2c2 = st.columns(2)
+    with r2c1:
+        top_ratio = ratio_sede_cliente.head(top_n).copy()
+        if not top_ratio.empty:
+            top_ratio["sede_cliente"] = top_ratio["unidad"].fillna("SIN DATO") + " | " + top_ratio["cliente"].fillna("SIN DATO")
+            st.plotly_chart(
+                px.bar(
+                    top_ratio.sort_values("ratio_visitas_%"),
+                    x="ratio_visitas_%",
+                    y="sede_cliente",
+                    color="responsable_norm",
+                    orientation="h",
+                    title=f"Ratio de visitas por sede + cliente (Top {top_n})",
+                    hover_data=["visitas"],
+                ),
+                use_container_width=True,
+            )
+    with r2c2:
         st.plotly_chart(
-            px.bar(
-                tabla_i.head(top_n).sort_values("puntuacion_prom", ascending=False),
-                x="puntuacion_prom",
-                y="cliente",
-                orientation="h",
-                text="puntuacion_prom",
-                hover_data=["visitas", "total_problemas", "% visitas con problemas"],
+            px.line(
+                tabla_d,
+                x="periodo",
+                y="visitas",
+                markers=True,
+                title=f"Tendencia de visitas por {granularidad.lower()}",
             ),
-            use_container_width=True
+            use_container_width=True,
         )
 
+    st.subheader("Tablas clave")
+    st.dataframe(tabla_supervisor_visitas.head(top_n), use_container_width=True, height=320)
+    st.dataframe(ratio_sede_cliente.head(top_n), use_container_width=True, height=320)
+    st.dataframe(sedes_no_visitadas, use_container_width=True, height=240)
 
-with tab_j:
-    st.subheader("J) Días promedio hasta siguiente visita por motivo")
-    st.dataframe(tabla_j, use_container_width=True, height=520)
+if not modo_compacto:
+    with tab_k:
+        st.subheader("K) Cliente + Unidad por columnas de Fecha")
+        st.dataframe(tabla_k, use_container_width=True, height=560)
+        st.subheader("Resumen Cliente + Unidad")
+        st.dataframe(tabla_cu, use_container_width=True, height=520)
 
-    if not tabla_j.empty:
-        st.plotly_chart(
-            px.bar(
-                tabla_j.sort_values("dias_prom", ascending=False),
-                x="dias_prom",
-                y="motivo_visita",
-                orientation="h",
-                text="dias_prom",
-                hover_data=["registros", "dias_mediana", "dias_min", "dias_max"],
-            ),
-            use_container_width=True
-        )
+    with tab_a:
+        st.subheader("A) Visitas por motivo")
+        st.plotly_chart(px.bar(tabla_a, x="motivo_visita", y="visitas", text="visitas"), use_container_width=True)
+        st.dataframe(tabla_a, use_container_width=True, height=520)
 
+    with tab_b:
+        st.subheader("B) Top clientes")
+        st.dataframe(tabla_b.head(top_n), use_container_width=True, height=520)
+
+    with tab_c:
+        st.subheader("C) Responsables")
+        st.dataframe(tabla_c.head(top_n), use_container_width=True, height=520)
+
+    with tab_d:
+        st.subheader(f"D) Evolución por {granularidad.lower()}")
+        st.dataframe(tabla_d, use_container_width=True, height=520)
+
+    with tab_e:
+        st.subheader("E) Problemas")
+        st.dataframe(tabla_e, use_container_width=True, height=420)
+
+    with tab_f:
+        st.subheader("F) Puntuación")
+        st.dataframe(tabla_f, use_container_width=True, height=420)
+
+    with tab_g:
+        st.subheader("G) Documentación")
+        st.dataframe(tabla_g, use_container_width=True, height=420)
+
+    with tab_h:
+        st.subheader("H) Sedes / unidades")
+        st.dataframe(tabla_h.head(top_n), use_container_width=True, height=520)
+
+    with tab_i:
+        st.subheader(f"I) Peor puntuación (mín. {min_visitas_peor_punt} visitas)")
+        st.dataframe(tabla_i.head(top_n), use_container_width=True, height=520)
+
+    with tab_j:
+        st.subheader("J) Días promedio hasta siguiente visita por motivo")
+        st.dataframe(tabla_j, use_container_width=True, height=520)
 
 with tab_detalle:
     st.subheader("Detalle filtrado")
