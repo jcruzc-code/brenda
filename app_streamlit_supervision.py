@@ -928,9 +928,13 @@ elif tipo_problema == "Problemas de destaque":
 elif tipo_problema == "Problemas SSOMA / SIG":
     data_base = data_base[data_base["flag_problema_ssoma"] == 1]
 
+fecha_inicio_dt = pd.to_datetime(fecha_inicio)
+# Incluir todo el día final (23:59:59.999999) para que un rango de un solo día funcione.
+fecha_fin_dt = pd.to_datetime(fecha_fin) + pd.Timedelta(days=1) - pd.Timedelta(microseconds=1)
+
 data = data_base[
-    (data_base["fecha_visita"] >= pd.to_datetime(fecha_inicio))
-    & (data_base["fecha_visita"] <= pd.to_datetime(fecha_fin))
+    (data_base["fecha_visita"] >= fecha_inicio_dt)
+    & (data_base["fecha_visita"] <= fecha_fin_dt)
 ].copy()
 
 if data.empty:
