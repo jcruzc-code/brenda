@@ -11,6 +11,7 @@ from datetime import datetime, date
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.io as pio
 import streamlit as st
 
 
@@ -25,19 +26,33 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+pio.templates.default = "plotly_white"
+
 st.title("📋 Dashboard Check List Supervisión")
-st.caption("Análisis operativo con filtros globales, tablas A-J y matriz Cliente-Unidad por Fecha.")
+st.caption("Panel ejecutivo de visitas: claro, simple y de lectura rápida.")
 
 st.markdown(
     """
     <style>
+    .stApp {
+        background: #f8fafc;
+        color: #0f172a;
+    }
+    [data-testid="stHeader"] {
+        background: #f8fafc;
+    }
+    [data-testid="stSidebar"] {
+        background: #eef2ff;
+    }
     [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h2 {
-        border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+        border-bottom: 1px solid rgba(15, 23, 42, 0.18);
         padding-bottom: 0.35rem;
         margin-bottom: 0.75rem;
+        color: #0f172a;
     }
     [data-testid="stSidebar"] label {
         font-weight: 600;
+        color: #0f172a;
     }
     [data-testid="stSidebar"] [data-baseweb="input"],
     [data-testid="stSidebar"] [data-baseweb="select"],
@@ -45,13 +60,22 @@ st.markdown(
         border-radius: 10px;
     }
     [data-testid="stSidebar"] [data-baseweb="input"] {
-        background: rgba(255, 255, 255, 0.02);
-        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
     }
     [data-testid="stSidebar"] .stDateInput {
         padding: 0.25rem;
         border-radius: 10px;
-        background: rgba(0, 0, 0, 0.22);
+        background: #ffffff;
+        border: 1px solid #cbd5e1;
+    }
+    .kpi-help {
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-left: 6px solid #2563eb;
+        border-radius: 12px;
+        padding: 12px 14px;
+        margin-bottom: 8px;
     }
     </style>
     """,
@@ -117,6 +141,20 @@ def parse_operarios(val):
         return np.nan
     match = re.search(r"\d+", str(val))
     return int(match.group()) if match else np.nan
+
+
+def estilizar_figura(fig):
+    fig.update_layout(
+        font=dict(size=14, color="#0f172a"),
+        title=dict(font=dict(size=20, color="#0f172a")),
+        plot_bgcolor="#ffffff",
+        paper_bgcolor="#ffffff",
+        margin=dict(l=30, r=20, t=60, b=30),
+        legend_title_text=""
+    )
+    fig.update_xaxes(showgrid=True, gridcolor="#e2e8f0")
+    fig.update_yaxes(showgrid=True, gridcolor="#e2e8f0")
+    return fig
 
 
 def tiene_problema(val):
@@ -825,22 +863,29 @@ if pd.isna(fecha_min) or pd.isna(fecha_max):
     st.error("No se encontraron fechas validas en la columna marca temporal.")
     st.stop()
 
-rango_fecha = st.sidebar.date_input(
-    "Rango de fecha (marca temporal)",
-    value=(fecha_min.date(), fecha_max.date()),
-    min_value=fecha_min.date(),
-    max_value=fecha_max.date()
+st.sidebar.caption(
+    f"Disponible en marca temporal: {fecha_min.date()} a {fecha_max.date()}"
 )
 
-if isinstance(rango_fecha, tuple) and len(rango_fecha) == 2:
-    fecha_inicio, fecha_fin = rango_fecha
-elif isinstance(rango_fecha, date):
-    # Permite filtrar un único día cuando el control devuelve una sola fecha.
-    fecha_inicio, fecha_fin = rango_fecha, rango_fecha
-elif isinstance(rango_fecha, (list, tuple)) and len(rango_fecha) == 1:
-    fecha_inicio, fecha_fin = rango_fecha[0], rango_fecha[0]
-else:
-    fecha_inicio, fecha_fin = fecha_min.date(), fecha_max.date()
+fecha_inicio = st.sidebar.date_input(
+    "Desde (marca temporal)",
+    value=fecha_min.date(),
+    min_value=fecha_min.date(),
+    max_value=fecha_max.date(),
+    key="fecha_inicio_mt"
+)
+
+fecha_fin = st.sidebar.date_input(
+    "Hasta (marca temporal)",
+    value=fecha_max.date(),
+    min_value=fecha_min.date(),
+    max_value=fecha_max.date(),
+    key="fecha_fin_mt"
+)
+
+if fecha_inicio > fecha_fin:
+    st.sidebar.warning("La fecha 'Desde' no puede ser mayor que 'Hasta'. Se intercambian.")
+    fecha_inicio, fecha_fin = fecha_fin, fecha_inicio
 
 responsables_sel = st.sidebar.multiselect(
     "Responsables",
@@ -1025,16 +1070,16 @@ total_problemas = data["total_problemas"].sum()
 emergencias = (data["motivo_visita_norm"] == "POR EMERGENCIA").sum()
 
 c1, c2, c3, c4 = st.columns(4)
-c1.metric("Visitas", f"{total_visitas:,.0f}")
-c2.metric("Clientes", f"{clientes_unicos:,.0f}")
-c3.metric("Unidades / sedes", f"{unidades_unicas:,.0f}")
-c4.metric("Responsables", f"{responsables_unicos:,.0f}")
+c1.metric("Total de visitas", f"{total_visitas:,.0f}")
+c2.metric("Clientes atendidos", f"{clientes_unicos:,.0f}")
+c3.metric("Sedes visitadas", f"{unidades_unicas:,.0f}")
+c4.metric("Supervisores activos", f"{responsables_unicos:,.0f}")
 
 c5, c6, c7, c8 = st.columns(4)
-c5.metric("Puntuación promedio", f"{punt_prom:.2f}" if pd.notna(punt_prom) else "S/D")
-c6.metric("Visitas con problemas", f"{visitas_con_problemas:,.0f}", f"{pct_problemas:.1f}%")
-c7.metric("Problemas detectados", f"{total_problemas:,.0f}")
-c8.metric("Emergencias", f"{emergencias:,.0f}")
+c5.metric("Satisfaccion promedio", f"{punt_prom:.2f}" if pd.notna(punt_prom) else "S/D")
+c6.metric("Visitas con alertas", f"{visitas_con_problemas:,.0f}", f"{pct_problemas:.1f}%")
+c7.metric("Alertas detectadas", f"{total_problemas:,.0f}")
+c8.metric("Visitas de emergencia", f"{emergencias:,.0f}")
 
 c9, c10 = st.columns(2)
 c9.metric("Promedio de sedes por supervisor", f"{promedio_sedes_por_supervisor:.1f}")
@@ -1100,62 +1145,71 @@ else:
     ])
 
 with tab_resumen:
-    st.subheader("Vista ejecutiva rápida")
+    st.subheader("Vista ejecutiva rapida")
+    estado_alertas = "ALTO" if pct_problemas >= 35 else ("MEDIO" if pct_problemas >= 20 else "BAJO")
+    st.markdown(
+        f"""
+        <div class="kpi-help">
+        <b>Resumen en lenguaje simple:</b><br>
+        1) Se realizaron <b>{total_visitas:,.0f}</b> visitas.<br>
+        2) El nivel de alertas es <b>{estado_alertas}</b> ({pct_problemas:.1f}% de visitas con alertas).<br>
+        3) Prioridad: revisar supervisores con mas alertas y sedes no visitadas.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     r1c1, r1c2 = st.columns(2)
     with r1c1:
-        st.plotly_chart(
-            px.bar(
-                tabla_supervisor_visitas.head(top_n).sort_values("visitas"),
-                x="visitas",
-                y="responsable_norm",
-                orientation="h",
-                text="visitas",
-                title=f"Visitas por supervisor (Top {top_n})",
-                hover_data=["unidades_visitadas", "clientes_atendidos", "% visitas con problemas"],
-            ),
-            use_container_width=True,
+        fig_supervisores = px.bar(
+            tabla_supervisor_visitas.head(top_n).sort_values("visitas"),
+            x="visitas",
+            y="responsable_norm",
+            orientation="h",
+            text="visitas",
+            title=f"Supervisores con mas visitas (Top {top_n})",
+            hover_data=["unidades_visitadas", "clientes_atendidos", "% visitas con problemas"],
+            color_discrete_sequence=["#2563eb"],
         )
+        st.plotly_chart(estilizar_figura(fig_supervisores), use_container_width=True)
+
     with r1c2:
-        st.plotly_chart(
-            px.bar(
-                tabla_a.head(top_n),
-                x="motivo_visita",
-                y="visitas",
-                text="visitas",
-                title="Motivos de visita",
-            ),
-            use_container_width=True,
+        fig_motivos = px.bar(
+            tabla_a.head(top_n),
+            x="motivo_visita",
+            y="visitas",
+            text="visitas",
+            title="Motivos principales de visita",
+            color_discrete_sequence=["#0ea5e9"],
         )
+        st.plotly_chart(estilizar_figura(fig_motivos), use_container_width=True)
 
     r2c1, r2c2 = st.columns(2)
     with r2c1:
         top_ratio = ratio_sede_cliente.head(top_n).copy()
         if not top_ratio.empty:
             top_ratio["sede_cliente"] = top_ratio["unidad"].fillna("SIN DATO") + " | " + top_ratio["cliente"].fillna("SIN DATO")
-            st.plotly_chart(
-                px.bar(
-                    top_ratio.sort_values("ratio_visitas_%"),
-                    x="ratio_visitas_%",
-                    y="sede_cliente",
-                    color="responsable_norm",
-                    orientation="h",
-                    title=f"Ratio de visitas por sede + cliente (Top {top_n})",
-                    hover_data=["visitas"],
-                ),
-                use_container_width=True,
+            fig_ratio = px.bar(
+                top_ratio.sort_values("ratio_visitas_%"),
+                x="ratio_visitas_%",
+                y="sede_cliente",
+                color="responsable_norm",
+                orientation="h",
+                title=f"Concentracion de visitas por sede + cliente (Top {top_n})",
+                hover_data=["visitas"],
             )
+            st.plotly_chart(estilizar_figura(fig_ratio), use_container_width=True)
+
     with r2c2:
-        st.plotly_chart(
-            px.line(
-                tabla_d,
-                x="periodo",
-                y="visitas",
-                markers=True,
-                title=f"Tendencia de visitas por {granularidad.lower()}",
-            ),
-            use_container_width=True,
+        fig_tendencia = px.line(
+            tabla_d,
+            x="periodo",
+            y="visitas",
+            markers=True,
+            title=f"Tendencia de visitas por {granularidad.lower()}",
+            color_discrete_sequence=["#1d4ed8"],
         )
+        st.plotly_chart(estilizar_figura(fig_tendencia), use_container_width=True)
 
     st.subheader("Tablas clave")
     st.dataframe(tabla_supervisor_visitas.head(top_n), use_container_width=True, height=320)
