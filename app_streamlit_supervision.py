@@ -1136,6 +1136,38 @@ tabla_mapa_visitas = (
     .reset_index(name="visitas")
 )
 
+preguntas_criticas_resumen = pd.DataFrame(
+    [
+        {"pregunta": "10) Materiales y uniformes", "casos": int(data["flag_problema_materiales"].sum())},
+        {"pregunta": "11) Pagos", "casos": int(data["flag_problema_pagos"].sum())},
+        {"pregunta": "12) Destaque de personal", "casos": int(data["flag_problema_destaque"].sum())},
+        {"pregunta": "13) SIG / SSOMA", "casos": int(data["flag_problema_ssoma"].sum())},
+    ]
+)
+preguntas_criticas_resumen["porcentaje"] = (
+    preguntas_criticas_resumen["casos"] / len(data) * 100 if len(data) else 0
+)
+preguntas_criticas_resumen["porcentaje"] = preguntas_criticas_resumen["porcentaje"].round(1)
+
+preguntas_criticas_supervisor = (
+    data.groupby("responsable_norm", dropna=False)
+    .agg(
+        visitas=("responsable_norm", "count"),
+        materiales=("flag_problema_materiales", "sum"),
+        pagos=("flag_problema_pagos", "sum"),
+        destaque=("flag_problema_destaque", "sum"),
+        sig_ssoma=("flag_problema_ssoma", "sum"),
+    )
+    .reset_index()
+)
+preguntas_criticas_supervisor["total_criticas"] = (
+    preguntas_criticas_supervisor["materiales"]
+    + preguntas_criticas_supervisor["pagos"]
+    + preguntas_criticas_supervisor["destaque"]
+    + preguntas_criticas_supervisor["sig_ssoma"]
+)
+preguntas_criticas_supervisor = preguntas_criticas_supervisor.sort_values("total_criticas", ascending=False)
+
 
 # ─────────────────────────────────────────────────────────────
 # 7. KPIS
@@ -1178,6 +1210,8 @@ tabs_export = {
     "Ratio_Sede_Cliente": ratio_sede_cliente,
     "Cliente_Unidad_Fecha_Conteo": tabla_cliente_unidad_fecha,
     "Alertas_por_Supervisor": tabla_alertas_supervisor,
+    "Preguntas_Criticas_10_13": preguntas_criticas_resumen,
+    "Preguntas_Criticas_Supervisor": preguntas_criticas_supervisor,
     "Sedes_No_Visitadas": sedes_no_visitadas,
     "K_Matriz_Cliente_Unidad": tabla_k,
     "Resumen_Cliente_Unidad": tabla_cu,
@@ -1365,11 +1399,56 @@ with tab_resumen:
             )
             st.altair_chart(estilizar_altair(ch_mapa), use_container_width=True)
 
+    st.subheader("Preguntas criticas (10 al 13)")
+    p1, p2, p3, p4 = st.columns(4)
+    p1.metric(
+        "10) Materiales/uniformes",
+        f"{int(data['flag_problema_materiales'].sum()):,}",
+        f"{(data['flag_problema_materiales'].sum()/len(data)*100 if len(data) else 0):.1f}%",
+    )
+    p2.metric(
+        "11) Pagos",
+        f"{int(data['flag_problema_pagos'].sum()):,}",
+        f"{(data['flag_problema_pagos'].sum()/len(data)*100 if len(data) else 0):.1f}%",
+    )
+    p3.metric(
+        "12) Destaque personal",
+        f"{int(data['flag_problema_destaque'].sum()):,}",
+        f"{(data['flag_problema_destaque'].sum()/len(data)*100 if len(data) else 0):.1f}%",
+    )
+    p4.metric(
+        "13) SIG/SSOMA",
+        f"{int(data['flag_problema_ssoma'].sum()):,}",
+        f"{(data['flag_problema_ssoma'].sum()/len(data)*100 if len(data) else 0):.1f}%",
+    )
+
+    ch_criticas = (
+        alt.Chart(preguntas_criticas_resumen)
+        .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6, color="#dc2626")
+        .encode(
+            x=alt.X("pregunta:N", title="Pregunta"),
+            y=alt.Y("casos:Q", title="Casos"),
+            tooltip=[
+                alt.Tooltip("pregunta:N", title="Pregunta"),
+                alt.Tooltip("casos:Q", title="Casos"),
+                alt.Tooltip("porcentaje:Q", title="% sobre visitas"),
+            ],
+        )
+        .properties(title="Comparativo de las 4 preguntas criticas", height=280)
+    )
+    st.altair_chart(estilizar_altair(ch_criticas), use_container_width=True)
+
     st.subheader("Tablas clave")
     st.dataframe(tabla_supervisor_visitas.head(top_n), use_container_width=True, height=320)
     st.dataframe(ratio_sede_cliente.head(top_n), use_container_width=True, height=320)
     st.markdown("**Conteo cliente + unidad + fecha + visitas**")
     st.dataframe(tabla_cliente_unidad_fecha.head(200), use_container_width=True, height=360)
+    st.markdown("**Preguntas criticas por supervisor (Top)**")
+    st.dataframe(
+        preguntas_criticas_supervisor.head(top_n),
+        use_container_width=True,
+        height=320
+    )
     st.dataframe(sedes_no_visitadas, use_container_width=True, height=240)
 
 if not modo_compacto:
