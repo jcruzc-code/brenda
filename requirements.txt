@@ -6,3 +6,9 @@ openpyxl
 xlsxwriter
 gspread
 google-auth
+scikit-learn
+sentence-transformers
+hdbscan
+umap-learn
+keybert
+yake

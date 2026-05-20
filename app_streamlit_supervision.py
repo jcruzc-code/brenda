@@ -5,6 +5,8 @@
 # ============================================================
 
 import io
+import json
+import os
 import re
 from datetime import datetime, date
 
@@ -116,6 +118,7 @@ ANIO_MAX = 2027
 # Si tu archivo tiene otra columna de unidad, cambia esta variable.
 UNIDAD_COL = "sede"
 FECHA_BASE_COL = "fecha_base"
+TAXONOMY_STATE_FILE = "tipologias_auto_state.json"
 
 
 # ─────────────────────────────────────────────────────────────
@@ -285,6 +288,236 @@ def tiene_problema(val):
             return 0
 
     return 1
+
+
+def clasificar_tipologia_problema(texto, pregunta):
+    if pd.isna(texto):
+        return "SIN RESPUESTA"
+
+    t = str(texto).strip().upper()
+    t = re.sub(r"\s+", " ", t)
+    if t == "":
+        return "SIN RESPUESTA"
+
+    frases_sin_problema = [
+        "NO", "NO.", "NO PRESENTA", "NO PRESENTA PROBLEMAS", "NO HAY",
+        "NINGUNO", "NINGUNA", "SIN NOVEDAD", "SIN OBSERVACIONES",
+        "SIN PROBLEMA", "SIN PROBLEMAS", "CONFORME", "OK", "TODO OK",
+        "TODO CONFORME", "N/A", "NA", "NO APLICA",
+    ]
+    if t in frases_sin_problema:
+        return "SIN PROBLEMA / CONFORME"
+
+    patrones = {
+        "MATERIALES": [
+            ("FALTA DE EPP / UNIFORME", ["SIN EPP", "SIN UNIFORME", "NO TIENE EPP", "NO TIENE UNIFORME", "FALTA UNIFORME", "FALTA EPP"]),
+            ("STOCK / REPOSICION", ["SIN STOCK", "STOCK", "REPOSICION", "REPOSICIÓN", "NO CUENTA CON MATERIAL", "SIN MATERIAL"]),
+            ("CALIDAD / ESTADO", ["MAL ESTADO", "ROTO", "DAÑADO", "DANADO", "DETERIORADO"]),
+            ("LOGISTICA / ENTREGA", ["NO LLEGO", "NO LLEGÓ", "DEMORA", "RETRASO", "ENTREGA"]),
+        ],
+        "PAGOS": [
+            ("ATRASO DE PAGO", ["ATRASO", "DEMORA", "DEUDA", "ADEUDA", "PAGO PENDIENTE"]),
+            ("HORAS EXTRAS / BONOS", ["HORA EXTRA", "HORAS EXTRA", "BONO", "COMISION", "COMISIÓN"]),
+            ("DESCUENTO / ADELANTO", ["DESCUENTO", "ADELANTO"]),
+            ("BOLETA / PLANILLA", ["BOLETA", "PLANILLA", "LIQUIDACION", "LIQUIDACIÓN"]),
+            ("BANCO / DEPOSITO", ["BANCO", "DEPOSITO", "DEPÓSITO", "TRANSFERENCIA", "YAPE", "PLIN"]),
+        ],
+        "DESTAQUE": [
+            ("FALTA DE PERSONAL", ["FALTA PERSONAL", "SIN PERSONAL", "NO HAY PERSONAL"]),
+            ("ROTACION / AUSENTISMO", ["ROTACION", "ROTACIÓN", "AUSENCIA", "AUSENTISMO", "INASISTENCIA"]),
+            ("REEMPLAZO / COBERTURA", ["REEMPLAZO", "COBERTURA", "CUBRIR TURNO", "CUBRIMIENTO"]),
+            ("PERFIL / CAPACITACION", ["PERFIL", "CAPACITACION", "CAPACITACIÓN", "ENTRENAMIENTO"]),
+            ("PROGRAMACION DE TURNOS", ["TURNO", "PROGRAMACION", "PROGRAMACIÓN", "ROL"]),
+        ],
+        "SSOMA": [
+            ("INCUMPLIMIENTO EPP / SEGURIDAD", ["SIN EPP", "EPP", "SEGURIDAD", "ACTO INSEGURO"]),
+            ("DOCUMENTACION SSOMA", ["IPERC", "PETS", "AST", "CHARLA", "PERMISO", "DOCUMENTO"]),
+            ("INCIDENTE / ACCIDENTE", ["INCIDENTE", "ACCIDENTE", "LESION", "LESIÓN"]),
+            ("ORDEN / LIMPIEZA / SENALIZACION", ["ORDEN", "LIMPIEZA", "SEÑALIZACION", "SENALIZACION", "SEÑAL", "SENAL"]),
+            ("INDUCCION / CAPACITACION", ["INDUCCION", "INDUCCIÓN", "CAPACITACION", "CAPACITACIÓN"]),
+        ],
+    }
+
+    for categoria, claves in patrones.get(pregunta, []):
+        if any(k in t for k in claves):
+            return categoria
+    return "OTROS COMENTARIOS"
+
+
+def _tokenizar_simple(texto):
+    t = str(texto).upper()
+    t = re.sub(r"[^A-Z0-9ÁÉÍÓÚÑÜ ]+", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    tokens = [x for x in t.split(" ") if len(x) >= 3]
+    return set(tokens)
+
+
+def _cargar_estado_tipologias():
+    if not os.path.exists(TAXONOMY_STATE_FILE):
+        return {"version": 1, "preguntas": {}, "unknown_pool": {}}
+    try:
+        with open(TAXONOMY_STATE_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data.setdefault("version", 1)
+        data.setdefault("preguntas", {})
+        data.setdefault("unknown_pool", {})
+        return data
+    except Exception:
+        return {"version": 1, "preguntas": {}, "unknown_pool": {}}
+
+
+def _guardar_estado_tipologias(state):
+    try:
+        with open(TAXONOMY_STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _bootstrap_tipologias_por_pregunta():
+    return {
+        "MATERIALES": {
+            "FALTA DE EPP / UNIFORME": ["SIN EPP", "SIN UNIFORME", "FALTA EPP", "FALTA UNIFORME"],
+            "STOCK / REPOSICION": ["SIN STOCK", "REPOSICION", "SIN MATERIAL"],
+            "CALIDAD / ESTADO": ["MAL ESTADO", "ROTO", "DAÑADO", "DETERIORADO"],
+            "LOGISTICA / ENTREGA": ["NO LLEGO", "DEMORA", "RETRASO", "ENTREGA"],
+            "SIN PROBLEMA / CONFORME": ["OK", "CONFORME", "SIN PROBLEMA", "SIN OBSERVACIONES"],
+        },
+        "PAGOS": {
+            "ATRASO DE PAGO": ["ATRASO", "DEUDA", "ADEUDA", "PAGO PENDIENTE"],
+            "HORAS EXTRAS / BONOS": ["HORAS EXTRA", "BONO", "COMISION"],
+            "DESCUENTO / ADELANTO": ["DESCUENTO", "ADELANTO"],
+            "BOLETA / PLANILLA": ["BOLETA", "PLANILLA", "LIQUIDACION"],
+            "BANCO / DEPOSITO": ["BANCO", "DEPOSITO", "TRANSFERENCIA", "YAPE", "PLIN"],
+            "SIN PROBLEMA / CONFORME": ["OK", "CONFORME", "SIN PROBLEMA", "SIN OBSERVACIONES"],
+        },
+        "DESTAQUE": {
+            "FALTA DE PERSONAL": ["FALTA PERSONAL", "SIN PERSONAL", "NO HAY PERSONAL"],
+            "ROTACION / AUSENTISMO": ["ROTACION", "AUSENCIA", "AUSENTISMO", "INASISTENCIA"],
+            "REEMPLAZO / COBERTURA": ["REEMPLAZO", "COBERTURA", "CUBRIR TURNO"],
+            "PERFIL / CAPACITACION": ["PERFIL", "CAPACITACION", "ENTRENAMIENTO"],
+            "PROGRAMACION DE TURNOS": ["TURNO", "PROGRAMACION", "ROL"],
+            "SIN PROBLEMA / CONFORME": ["OK", "CONFORME", "SIN PROBLEMA", "SIN OBSERVACIONES"],
+        },
+        "SSOMA": {
+            "INCUMPLIMIENTO EPP / SEGURIDAD": ["SIN EPP", "SEGURIDAD", "ACTO INSEGURO"],
+            "DOCUMENTACION SSOMA": ["IPERC", "PETS", "AST", "CHARLA", "PERMISO", "DOCUMENTO"],
+            "INCIDENTE / ACCIDENTE": ["INCIDENTE", "ACCIDENTE", "LESION"],
+            "ORDEN / LIMPIEZA / SENALIZACION": ["ORDEN", "LIMPIEZA", "SEÑALIZACION", "SENALIZACION"],
+            "INDUCCION / CAPACITACION": ["INDUCCION", "CAPACITACION"],
+            "SIN PROBLEMA / CONFORME": ["OK", "CONFORME", "SIN PROBLEMA", "SIN OBSERVACIONES"],
+        },
+    }
+
+
+def _inicializar_estado_tipologias(state):
+    base = _bootstrap_tipologias_por_pregunta()
+    for pregunta, tipos in base.items():
+        state["preguntas"].setdefault(pregunta, {})
+        for tipologia, ejemplos in tipos.items():
+            state["preguntas"][pregunta].setdefault(
+                tipologia,
+                {"ejemplos": ejemplos[:], "n": 0}
+            )
+    for p in base.keys():
+        state["unknown_pool"].setdefault(p, [])
+    return state
+
+
+def _similitud_por_tokens(texto, ejemplos):
+    t = _tokenizar_simple(texto)
+    if not t:
+        return 0.0
+    best = 0.0
+    for e in ejemplos:
+        et = _tokenizar_simple(e)
+        if not et:
+            continue
+        inter = len(t & et)
+        union = len(t | et)
+        sim = inter / union if union else 0.0
+        best = max(best, sim)
+    return best
+
+
+def _nombre_tipologia_automatica(texto, pregunta):
+    tokens = [x for x in _tokenizar_simple(texto) if x not in {"NO", "HAY", "CON", "DEL", "PARA", "POR"}]
+    if not tokens:
+        return f"NUEVA_TIPOLOGIA_{pregunta}"
+    base = "_".join(tokens[:3])
+    return f"AUTO_{base[:40]}"
+
+
+def _clasificar_o_crear_tipologia(texto, pregunta, state, umbral=0.34, min_pool=25):
+    if pd.isna(texto) or str(texto).strip() == "":
+        return "SIN RESPUESTA"
+
+    texto_up = str(texto).strip().upper()
+    catalogo = state["preguntas"].setdefault(pregunta, {})
+    if not catalogo:
+        return "OTROS COMENTARIOS"
+
+    # 1) regla base heredada
+    base = clasificar_tipologia_problema(texto_up, pregunta)
+    if base not in ("OTROS COMENTARIOS", "SIN RESPUESTA"):
+        item = catalogo.setdefault(base, {"ejemplos": [], "n": 0})
+        item["n"] = item.get("n", 0) + 1
+        if len(item.get("ejemplos", [])) < 20:
+            item.setdefault("ejemplos", []).append(texto_up)
+        return base
+
+    # 2) similitud semántica por token overlap contra ejemplos acumulados
+    best_tip = None
+    best_sim = 0.0
+    for tip, info in catalogo.items():
+        sim = _similitud_por_tokens(texto_up, info.get("ejemplos", []))
+        if sim > best_sim:
+            best_sim = sim
+            best_tip = tip
+
+    if best_tip is not None and best_sim >= umbral:
+        item = catalogo[best_tip]
+        item["n"] = item.get("n", 0) + 1
+        if len(item.get("ejemplos", [])) < 30:
+            item.setdefault("ejemplos", []).append(texto_up)
+        return best_tip
+
+    # 3) autoaprendizaje sin humano: acumula y crea tipología nueva por volumen
+    pool = state["unknown_pool"].setdefault(pregunta, [])
+    pool.append(texto_up)
+    if len(pool) >= min_pool:
+        # heurística: tipología nueva sobre respuesta más frecuente en pool
+        freq = {}
+        for p in pool:
+            freq[p] = freq.get(p, 0) + 1
+        top_text = sorted(freq.items(), key=lambda x: x[1], reverse=True)[0][0]
+        nueva = _nombre_tipologia_automatica(top_text, pregunta)
+        if nueva not in catalogo:
+            catalogo[nueva] = {"ejemplos": [top_text], "n": 0}
+        state["unknown_pool"][pregunta] = []
+        catalogo[nueva]["n"] = catalogo[nueva].get("n", 0) + 1
+        return nueva
+
+    return "OTROS COMENTARIOS"
+
+
+def aplicar_tipologias_automaticas(df):
+    state = _inicializar_estado_tipologias(_cargar_estado_tipologias())
+    out = df.copy()
+    out["tipo_problema_materiales"] = out["problema_materiales"].apply(
+        lambda x: _clasificar_o_crear_tipologia(x, "MATERIALES", state)
+    )
+    out["tipo_problema_pagos"] = out["problema_pagos"].apply(
+        lambda x: _clasificar_o_crear_tipologia(x, "PAGOS", state)
+    )
+    out["tipo_problema_destaque"] = out["problema_destaque"].apply(
+        lambda x: _clasificar_o_crear_tipologia(x, "DESTAQUE", state)
+    )
+    out["tipo_problema_ssoma"] = out["problema_ssoma"].apply(
+        lambda x: _clasificar_o_crear_tipologia(x, "SSOMA", state)
+    )
+    _guardar_estado_tipologias(state)
+    return out
 
 
 def lista_documentos(x):
@@ -493,6 +726,7 @@ def preparar_datos(df_raw):
     df["flag_problema_pagos"] = df["problema_pagos"].apply(tiene_problema)
     df["flag_problema_destaque"] = df["problema_destaque"].apply(tiene_problema)
     df["flag_problema_ssoma"] = df["problema_ssoma"].apply(tiene_problema)
+    df = aplicar_tipologias_automaticas(df)
 
     problem_cols = [
         "flag_problema_materiales",
@@ -806,6 +1040,36 @@ def tabla_k_matriz_cliente_unidad_fecha(data, granularidad="Día", min_visitas=1
     matriz = matriz[cols]
 
     return matriz
+
+
+def matriz_drilldown_cliente_unidad_fecha(data, cliente_sel=None, unidad_sel=None):
+    base = data.copy()
+    base["fecha_col"] = base[FECHA_BASE_COL].dt.strftime("%Y-%m-%d")
+
+    if cliente_sel and cliente_sel != "TODOS":
+        base = base[base["cliente"] == cliente_sel]
+    if unidad_sel and unidad_sel != "TODAS":
+        base = base[base["unidad"] == unidad_sel]
+
+    if base.empty:
+        return pd.DataFrame()
+
+    matriz = (
+        base.groupby(["cliente", "unidad", "fecha_col"], dropna=False)
+        .size()
+        .reset_index(name="visitas")
+        .pivot_table(
+            index=["cliente", "unidad"],
+            columns="fecha_col",
+            values="visitas",
+            aggfunc="sum",
+            fill_value=0,
+        )
+        .sort_index(axis=1)
+    )
+    matriz["TOTAL_VISITAS"] = matriz.sum(axis=1)
+    cols = ["TOTAL_VISITAS"] + [c for c in matriz.columns if c != "TOTAL_VISITAS"]
+    return matriz[cols].sort_values("TOTAL_VISITAS", ascending=False)
 
 
 def resumen_cliente_unidad(data):
@@ -1168,6 +1432,39 @@ preguntas_criticas_supervisor["total_criticas"] = (
 )
 preguntas_criticas_supervisor = preguntas_criticas_supervisor.sort_values("total_criticas", ascending=False)
 
+tipologia_larga = pd.concat(
+    [
+        data.loc[:, ["responsable_norm", "flag_problema_materiales", "tipo_problema_materiales"]]
+        .rename(columns={"flag_problema_materiales": "flag", "tipo_problema_materiales": "tipologia"})
+        .assign(pregunta="10) Materiales/uniformes"),
+        data.loc[:, ["responsable_norm", "flag_problema_pagos", "tipo_problema_pagos"]]
+        .rename(columns={"flag_problema_pagos": "flag", "tipo_problema_pagos": "tipologia"})
+        .assign(pregunta="11) Pagos"),
+        data.loc[:, ["responsable_norm", "flag_problema_destaque", "tipo_problema_destaque"]]
+        .rename(columns={"flag_problema_destaque": "flag", "tipo_problema_destaque": "tipologia"})
+        .assign(pregunta="12) Destaque personal"),
+        data.loc[:, ["responsable_norm", "flag_problema_ssoma", "tipo_problema_ssoma"]]
+        .rename(columns={"flag_problema_ssoma": "flag", "tipo_problema_ssoma": "tipologia"})
+        .assign(pregunta="13) SIG/SSOMA"),
+    ],
+    ignore_index=True,
+)
+
+tipologia_larga = tipologia_larga[tipologia_larga["flag"] == 1].copy()
+tipologia_resumen = (
+    tipologia_larga.groupby(["pregunta", "tipologia"], dropna=False)
+    .size()
+    .reset_index(name="casos")
+    .sort_values(["pregunta", "casos"], ascending=[True, False])
+)
+
+tipologia_supervisor = (
+    tipologia_larga.groupby(["pregunta", "responsable_norm", "tipologia"], dropna=False)
+    .size()
+    .reset_index(name="casos")
+    .sort_values(["pregunta", "casos"], ascending=[True, False])
+)
+
 
 # ─────────────────────────────────────────────────────────────
 # 7. KPIS
@@ -1212,6 +1509,8 @@ tabs_export = {
     "Alertas_por_Supervisor": tabla_alertas_supervisor,
     "Preguntas_Criticas_10_13": preguntas_criticas_resumen,
     "Preguntas_Criticas_Supervisor": preguntas_criticas_supervisor,
+    "Tipologia_Criticas": tipologia_resumen,
+    "Tipologia_Criticas_Supervisor": tipologia_supervisor,
     "Sedes_No_Visitadas": sedes_no_visitadas,
     "K_Matriz_Cliente_Unidad": tabla_k,
     "Resumen_Cliente_Unidad": tabla_cu,
@@ -1399,6 +1698,37 @@ with tab_resumen:
             )
             st.altair_chart(estilizar_altair(ch_mapa), use_container_width=True)
 
+    st.subheader("Cobertura de sedes")
+    sedes_visitadas_cnt = len(unidades_periodo)
+    sedes_no_visitadas_cnt = len(sedes_no_visitadas)
+    donut_df = pd.DataFrame(
+        [
+            {"estado": "Sedes visitadas", "cantidad": sedes_visitadas_cnt},
+            {"estado": "Sedes no visitadas", "cantidad": sedes_no_visitadas_cnt},
+        ]
+    )
+    ch_donut = (
+        alt.Chart(donut_df)
+        .mark_arc(innerRadius=75, outerRadius=130)
+        .encode(
+            theta=alt.Theta("cantidad:Q", title="Cantidad"),
+            color=alt.Color(
+                "estado:N",
+                title="Estado",
+                scale=alt.Scale(
+                    domain=["Sedes visitadas", "Sedes no visitadas"],
+                    range=["#22c55e", "#ef4444"],
+                ),
+            ),
+            tooltip=[alt.Tooltip("estado:N", title="Estado"), alt.Tooltip("cantidad:Q", title="Cantidad")],
+        )
+        .properties(title="Donut: sedes visitadas vs no visitadas", height=320)
+    )
+    st.altair_chart(estilizar_altair(ch_donut), use_container_width=True)
+    d1, d2 = st.columns(2)
+    d1.metric("Sedes visitadas", f"{sedes_visitadas_cnt:,}")
+    d2.metric("Sedes no visitadas", f"{sedes_no_visitadas_cnt:,}")
+
     st.subheader("Preguntas criticas (10 al 13)")
     p1, p2, p3, p4 = st.columns(4)
     p1.metric(
@@ -1437,6 +1767,77 @@ with tab_resumen:
         .properties(title="Comparativo de las 4 preguntas criticas", height=280)
     )
     st.altair_chart(estilizar_altair(ch_criticas), use_container_width=True)
+
+    pregunta_sel = st.selectbox(
+        "Analizar tipología de comentarios por pregunta",
+        [
+            "10) Materiales/uniformes",
+            "11) Pagos",
+            "12) Destaque personal",
+            "13) SIG/SSOMA",
+        ],
+        key="pregunta_tipologia_sel",
+    )
+
+    tipologia_sel = tipologia_resumen[tipologia_resumen["pregunta"] == pregunta_sel].head(12).copy()
+    if not tipologia_sel.empty:
+        ch_tip = (
+            alt.Chart(tipologia_sel.sort_values("casos", ascending=False))
+            .mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6, color="#7c3aed")
+            .encode(
+                x=alt.X("tipologia:N", sort="-y", title="Tipología de comentario"),
+                y=alt.Y("casos:Q", title="Casos"),
+                tooltip=[alt.Tooltip("tipologia:N", title="Tipología"), alt.Tooltip("casos:Q", title="Casos")],
+            )
+            .properties(title=f"Tipología de comentarios: {pregunta_sel}", height=300)
+        )
+        st.altair_chart(estilizar_altair(ch_tip), use_container_width=True)
+
+    st.markdown("**Detalle tipológico por supervisor (pregunta seleccionada)**")
+    st.dataframe(
+        tipologia_supervisor[tipologia_supervisor["pregunta"] == pregunta_sel].head(50),
+        use_container_width=True,
+        height=280,
+    )
+
+    st.subheader("Drill down: cliente -> unidad con fechas por columna")
+    cliente_opts = ["TODOS"] + sorted([c for c in data["cliente"].dropna().unique()])
+    cliente_dd = st.selectbox("Cliente (drill down)", cliente_opts, key="cliente_dd")
+    if cliente_dd == "TODOS":
+        unidad_opts = ["TODAS"]
+    else:
+        unidad_opts = ["TODAS"] + sorted(
+            data.loc[data["cliente"] == cliente_dd, "unidad"].dropna().unique().tolist()
+        )
+    unidad_dd = st.selectbox("Unidad (drill down)", unidad_opts, key="unidad_dd")
+
+    matriz_dd = matriz_drilldown_cliente_unidad_fecha(data, cliente_dd, unidad_dd)
+    if not matriz_dd.empty:
+        st.dataframe(matriz_dd, use_container_width=True, height=380)
+        hm = (
+            matriz_dd.drop(columns=["TOTAL_VISITAS"], errors="ignore")
+            .reset_index()
+            .melt(id_vars=["cliente", "unidad"], var_name="fecha_col", value_name="visitas")
+        )
+        hm["cliente_unidad"] = hm["cliente"].fillna("SIN DATO") + " | " + hm["unidad"].fillna("SIN DATO")
+        hm = hm[hm["visitas"] > 0]
+        if not hm.empty:
+            ch_dd = (
+                alt.Chart(hm)
+                .mark_rect()
+                .encode(
+                    x=alt.X("fecha_col:N", title="Fecha"),
+                    y=alt.Y("cliente_unidad:N", title="Cliente | Unidad"),
+                    color=alt.Color("visitas:Q", title="Visitas", scale=alt.Scale(scheme="blues")),
+                    tooltip=[
+                        alt.Tooltip("cliente_unidad:N", title="Cliente | Unidad"),
+                        alt.Tooltip("fecha_col:N", title="Fecha"),
+                        alt.Tooltip("visitas:Q", title="Visitas"),
+                    ],
+                )
+                .properties(title="Mapa de visitas por fecha (drill down)", height=280)
+            )
+            st.altair_chart(estilizar_altair(ch_dd), use_container_width=True)
 
     st.subheader("Tablas clave")
     st.dataframe(tabla_supervisor_visitas.head(top_n), use_container_width=True, height=320)
@@ -1519,12 +1920,16 @@ with tab_detalle:
         "status_documentacion",
         "problema_materiales",
         "flag_problema_materiales",
+        "tipo_problema_materiales",
         "problema_pagos",
         "flag_problema_pagos",
+        "tipo_problema_pagos",
         "problema_destaque",
         "flag_problema_destaque",
+        "tipo_problema_destaque",
         "problema_ssoma",
         "flag_problema_ssoma",
+        "tipo_problema_ssoma",
         "total_problemas",
         "tiene_algun_problema",
         "puntuacion_cliente",
