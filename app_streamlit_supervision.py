@@ -35,14 +35,17 @@ st.markdown(
     """
     <style>
     .stApp {
-        background: #f8fafc;
-        color: #0f172a;
+        background: #f4f7fb;
+    }
+    .stApp, .stApp p, .stApp li, .stApp label, .stApp span, .stApp div, .stApp h1, .stApp h2, .stApp h3, .stApp h4 {
+        color: #0f172a !important;
     }
     [data-testid="stHeader"] {
-        background: #f8fafc;
+        background: #f4f7fb;
     }
     [data-testid="stSidebar"] {
-        background: #eef2ff;
+        background: #e9eef8;
+        border-right: 1px solid #cbd5e1;
     }
     [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h2 {
         border-bottom: 1px solid rgba(15, 23, 42, 0.18);
@@ -50,9 +53,9 @@ st.markdown(
         margin-bottom: 0.75rem;
         color: #0f172a;
     }
-    [data-testid="stSidebar"] label {
+    [data-testid="stSidebar"] label, [data-testid="stSidebar"] p, [data-testid="stSidebar"] span, [data-testid="stSidebar"] div {
         font-weight: 600;
-        color: #0f172a;
+        color: #0f172a !important;
     }
     [data-testid="stSidebar"] [data-baseweb="input"],
     [data-testid="stSidebar"] [data-baseweb="select"],
@@ -68,6 +71,26 @@ st.markdown(
         border-radius: 10px;
         background: #ffffff;
         border: 1px solid #cbd5e1;
+    }
+    .stTextInput input, .stNumberInput input, .stDateInput input {
+        color: #0f172a !important;
+        background: #ffffff !important;
+    }
+    .stSelectbox div[data-baseweb="select"] > div,
+    .stMultiSelect div[data-baseweb="select"] > div {
+        color: #0f172a !important;
+        background: #ffffff !important;
+        border: 1px solid #cbd5e1 !important;
+    }
+    .stButton button, .stDownloadButton button {
+        background: #1d4ed8 !important;
+        color: #ffffff !important;
+        border: 1px solid #1e40af !important;
+        border-radius: 10px !important;
+        font-weight: 700 !important;
+    }
+    [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
+        color: #0b132b !important;
     }
     .kpi-help {
         background: #ffffff;
