@@ -10,6 +10,7 @@ from datetime import datetime, date
 
 import numpy as np
 import pandas as pd
+import altair as alt
 import plotly.express as px
 import plotly.io as pio
 import streamlit as st
@@ -91,6 +92,9 @@ st.markdown(
     }
     [data-testid="stMetricValue"], [data-testid="stMetricLabel"] {
         color: #0b132b !important;
+    }
+    .js-plotly-plot text, .js-plotly-plot .xtick text, .js-plotly-plot .ytick text, .js-plotly-plot .gtitle {
+        fill: #000000 !important;
     }
     .kpi-help {
         background: #ffffff;
@@ -178,6 +182,25 @@ def estilizar_figura(fig):
     fig.update_xaxes(showgrid=True, gridcolor="#e2e8f0")
     fig.update_yaxes(showgrid=True, gridcolor="#e2e8f0")
     return fig
+
+
+def estilizar_altair(chart):
+    return (
+        chart
+        .configure_view(stroke=None)
+        .configure_title(color="#000000", fontSize=20)
+        .configure_axis(
+            labelColor="#000000",
+            titleColor="#000000",
+            gridColor="#dbe2ea",
+            domainColor="#1f2937",
+            tickColor="#1f2937",
+        )
+        .configure_legend(
+            labelColor="#000000",
+            titleColor="#000000",
+        )
+    )
 
 
 def tiene_problema(val):
@@ -1077,6 +1100,42 @@ sedes_no_visitadas = pd.DataFrame({
     "unidad_no_visitada": sorted(unidades_universo - unidades_periodo)
 })
 
+tabla_cliente_unidad_fecha = (
+    data.assign(fecha_reporte=data[FECHA_BASE_COL].dt.strftime("%Y-%m-%d"))
+    .groupby(["cliente", "unidad", "fecha_reporte"], dropna=False)
+    .agg(
+        visitas=("fecha_reporte", "count"),
+        supervisores=("responsable_norm", "nunique"),
+        alertas=("tiene_algun_problema", "sum"),
+    )
+    .reset_index()
+    .sort_values(["fecha_reporte", "visitas"], ascending=[False, False])
+)
+
+tabla_alertas_supervisor = (
+    data.groupby("responsable_norm", dropna=False)
+    .agg(
+        visitas=("responsable_norm", "count"),
+        visitas_con_alertas=("tiene_algun_problema", "sum"),
+    )
+    .reset_index()
+)
+tabla_alertas_supervisor["porc_alertas"] = (
+    tabla_alertas_supervisor["visitas_con_alertas"] / tabla_alertas_supervisor["visitas"] * 100
+).round(1)
+tabla_alertas_supervisor = tabla_alertas_supervisor.sort_values("visitas_con_alertas", ascending=False)
+
+sup_top = set(tabla_supervisor_visitas.head(min(top_n, 12))["responsable_norm"].dropna())
+sedes_top = set(
+    data.groupby("unidad", dropna=False).size().sort_values(ascending=False).head(12).index
+)
+tabla_mapa_visitas = (
+    data[data["responsable_norm"].isin(sup_top) & data["unidad"].isin(sedes_top)]
+    .groupby(["responsable_norm", "unidad"], dropna=False)
+    .size()
+    .reset_index(name="visitas")
+)
+
 
 # ─────────────────────────────────────────────────────────────
 # 7. KPIS
@@ -1117,6 +1176,8 @@ tabs_export = {
     "Datos_Filtrados": data,
     "Resumen_Supervisores": tabla_supervisor_visitas,
     "Ratio_Sede_Cliente": ratio_sede_cliente,
+    "Cliente_Unidad_Fecha_Conteo": tabla_cliente_unidad_fecha,
+    "Alertas_por_Supervisor": tabla_alertas_supervisor,
     "Sedes_No_Visitadas": sedes_no_visitadas,
     "K_Matriz_Cliente_Unidad": tabla_k,
     "Resumen_Cliente_Unidad": tabla_cu,
@@ -1184,59 +1245,131 @@ with tab_resumen:
 
     r1c1, r1c2 = st.columns(2)
     with r1c1:
-        fig_supervisores = px.bar(
-            tabla_supervisor_visitas.head(top_n).sort_values("visitas"),
-            x="visitas",
-            y="responsable_norm",
-            orientation="h",
-            text="visitas",
-            title=f"Supervisores con mas visitas (Top {top_n})",
-            hover_data=["unidades_visitadas", "clientes_atendidos", "% visitas con problemas"],
-            color_discrete_sequence=["#2563eb"],
+        sup = tabla_supervisor_visitas.head(top_n).sort_values("visitas").copy()
+        ch_sup = (
+            alt.Chart(sup)
+            .mark_bar(cornerRadiusTopRight=5, cornerRadiusBottomRight=5, color="#2563eb")
+            .encode(
+                x=alt.X("visitas:Q", title="Visitas"),
+                y=alt.Y("responsable_norm:N", sort="-x", title="Supervisor"),
+                tooltip=[
+                    alt.Tooltip("responsable_norm:N", title="Supervisor"),
+                    alt.Tooltip("visitas:Q", title="Visitas"),
+                    alt.Tooltip("unidades_visitadas:Q", title="Sedes"),
+                    alt.Tooltip("clientes_atendidos:Q", title="Clientes"),
+                    alt.Tooltip("% visitas con problemas:Q", title="% con alertas"),
+                ],
+            )
+            .properties(title=f"Supervisores con mas visitas (Top {top_n})", height=330)
         )
-        st.plotly_chart(estilizar_figura(fig_supervisores), use_container_width=True)
+        st.altair_chart(estilizar_altair(ch_sup), use_container_width=True)
 
     with r1c2:
-        fig_motivos = px.bar(
-            tabla_a.head(top_n),
-            x="motivo_visita",
-            y="visitas",
-            text="visitas",
-            title="Motivos principales de visita",
-            color_discrete_sequence=["#0ea5e9"],
+        mot = tabla_a.head(top_n).copy()
+        ch_mot = (
+            alt.Chart(mot)
+            .mark_bar(cornerRadiusTopLeft=5, cornerRadiusTopRight=5, color="#0ea5e9")
+            .encode(
+                x=alt.X("motivo_visita:N", title="Motivo", sort="-y"),
+                y=alt.Y("visitas:Q", title="Visitas"),
+                tooltip=[alt.Tooltip("motivo_visita:N", title="Motivo"), alt.Tooltip("visitas:Q", title="Visitas")],
+            )
+            .properties(title="Motivos principales de visita", height=330)
         )
-        st.plotly_chart(estilizar_figura(fig_motivos), use_container_width=True)
+        st.altair_chart(estilizar_altair(ch_mot), use_container_width=True)
 
     r2c1, r2c2 = st.columns(2)
     with r2c1:
         top_ratio = ratio_sede_cliente.head(top_n).copy()
         if not top_ratio.empty:
             top_ratio["sede_cliente"] = top_ratio["unidad"].fillna("SIN DATO") + " | " + top_ratio["cliente"].fillna("SIN DATO")
-            fig_ratio = px.bar(
-                top_ratio.sort_values("ratio_visitas_%"),
-                x="ratio_visitas_%",
-                y="sede_cliente",
-                color="responsable_norm",
-                orientation="h",
-                title=f"Concentracion de visitas por sede + cliente (Top {top_n})",
-                hover_data=["visitas"],
+            ch_ratio = (
+                alt.Chart(top_ratio.sort_values("ratio_visitas_%"))
+                .mark_bar(cornerRadiusTopRight=5, cornerRadiusBottomRight=5)
+                .encode(
+                    x=alt.X("ratio_visitas_%:Q", title="Ratio de visitas (%)"),
+                    y=alt.Y("sede_cliente:N", sort="-x", title="Sede + Cliente"),
+                    color=alt.Color("responsable_norm:N", title="Supervisor"),
+                    tooltip=[
+                        alt.Tooltip("responsable_norm:N", title="Supervisor"),
+                        alt.Tooltip("sede_cliente:N", title="Sede + Cliente"),
+                        alt.Tooltip("visitas:Q", title="Visitas"),
+                        alt.Tooltip("ratio_visitas_%:Q", title="Ratio %"),
+                    ],
+                )
+                .properties(title=f"Concentracion de visitas por sede + cliente (Top {top_n})", height=330)
             )
-            st.plotly_chart(estilizar_figura(fig_ratio), use_container_width=True)
+            st.altair_chart(estilizar_altair(ch_ratio), use_container_width=True)
 
     with r2c2:
-        fig_tendencia = px.line(
-            tabla_d,
-            x="periodo",
-            y="visitas",
-            markers=True,
-            title=f"Tendencia de visitas por {granularidad.lower()}",
-            color_discrete_sequence=["#1d4ed8"],
+        ch_tend = (
+            alt.Chart(tabla_d)
+            .mark_line(point=alt.OverlayMarkDef(color="#1d4ed8", filled=True, size=60), color="#1d4ed8", strokeWidth=3)
+            .encode(
+                x=alt.X("periodo:N", title=f"Periodo ({granularidad})"),
+                y=alt.Y("visitas:Q", title="Visitas"),
+                tooltip=[alt.Tooltip("periodo:N", title="Periodo"), alt.Tooltip("visitas:Q", title="Visitas")],
+            )
+            .properties(title=f"Tendencia de visitas por {granularidad.lower()}", height=330)
         )
-        st.plotly_chart(estilizar_figura(fig_tendencia), use_container_width=True)
+        st.altair_chart(estilizar_altair(ch_tend), use_container_width=True)
+
+    r3c1, r3c2 = st.columns(2)
+    with r3c1:
+        alert_top = tabla_alertas_supervisor.head(top_n).copy()
+        ch_alertas = (
+            alt.Chart(alert_top)
+            .transform_fold(
+                ["visitas_con_alertas", "visitas"],
+                as_=["tipo", "valor"]
+            )
+            .mark_bar()
+            .encode(
+                x=alt.X("valor:Q", title="Cantidad"),
+                y=alt.Y("responsable_norm:N", sort="-x", title="Supervisor"),
+                color=alt.Color(
+                    "tipo:N",
+                    title="Tipo",
+                    scale=alt.Scale(
+                        domain=["visitas_con_alertas", "visitas"],
+                        range=["#ef4444", "#93c5fd"],
+                    ),
+                ),
+                tooltip=[
+                    alt.Tooltip("responsable_norm:N", title="Supervisor"),
+                    alt.Tooltip("visitas:Q", title="Visitas"),
+                    alt.Tooltip("visitas_con_alertas:Q", title="Visitas con alertas"),
+                    alt.Tooltip("porc_alertas:Q", title="% alertas"),
+                ],
+            )
+            .properties(title=f"Alertas por supervisor (Top {top_n})", height=330)
+        )
+        st.altair_chart(estilizar_altair(ch_alertas), use_container_width=True)
+
+    with r3c2:
+        if not tabla_mapa_visitas.empty:
+            ch_mapa = (
+                alt.Chart(tabla_mapa_visitas)
+                .mark_rect()
+                .encode(
+                    x=alt.X("unidad:N", title="Sede"),
+                    y=alt.Y("responsable_norm:N", title="Supervisor"),
+                    color=alt.Color("visitas:Q", title="Visitas", scale=alt.Scale(scheme="blues")),
+                    tooltip=[
+                        alt.Tooltip("responsable_norm:N", title="Supervisor"),
+                        alt.Tooltip("unidad:N", title="Sede"),
+                        alt.Tooltip("visitas:Q", title="Visitas"),
+                    ],
+                )
+                .properties(title="Mapa rápido: quién visita qué sede", height=330)
+            )
+            st.altair_chart(estilizar_altair(ch_mapa), use_container_width=True)
 
     st.subheader("Tablas clave")
     st.dataframe(tabla_supervisor_visitas.head(top_n), use_container_width=True, height=320)
     st.dataframe(ratio_sede_cliente.head(top_n), use_container_width=True, height=320)
+    st.markdown("**Conteo cliente + unidad + fecha + visitas**")
+    st.dataframe(tabla_cliente_unidad_fecha.head(200), use_container_width=True, height=360)
     st.dataframe(sedes_no_visitadas, use_container_width=True, height=240)
 
 if not modo_compacto:
